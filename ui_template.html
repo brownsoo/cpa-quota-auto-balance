@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quota Auto-Balance</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --panel-border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --healthy: #22c55e;
+      --low: #f59e0b;
+      --critical: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .title-group h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .title-group p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    button.primary {
+      background: var(--accent);
+      color: #0f172a;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    button.primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      color: #fff;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 20px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      align-items: end;
+    }
+    .field label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .field input[type="number"],
+    .field input[type="password"] {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge.healthy { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+    .badge.low { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+    .badge.critical { background: rgba(239, 68, 68, 0.18); color: #f87171; }
+    .badge.neutral { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .window-pill {
+      display: inline-block;
+      background: #0f172a;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      padding: 2px 7px;
+      margin: 2px 4px 2px 0;
+      font-size: 0.75rem;
+    }
+    .status-bar {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-group">
+        <h1>
+          <span>⚖️ Quota Auto-Balance</span>
+          <span id="enabledBadge" class="badge neutral">...</span>
+        </h1>
+        <p id="subtitleText">남은 쿼터(5h/7d/모델 그룹) 병목률에 따라 인증 파일의 Priority와 Weight를 자동 조정합니다.</p>
+      </div>
+      <div class="toolbar">
+        <button id="syncNowBtn" class="primary" onclick="triggerSync()">Sync Now</button>
+        <button id="restoreBtn" onclick="triggerRestore()">Restore Originals</button>
+        <button onclick="loadStatus()">Refresh</button>
+      </div>
+    </header>
+
+    <div id="errorBanner" class="error-banner"></div>
+
+    <div class="card">
+      <div class="toggle-row">
+        <div>
+          <strong>Auto-Balance Active</strong>
+          <div class="status-bar" id="lastSyncText">Last sync: -</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
+            <input type="checkbox" id="cfgEnabled" onchange="saveConfig()" />
+            <span>Enable Auto-Balance</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
+            <input type="checkbox" id="cfgRestoreOnDisable" onchange="saveConfig()" />
+            <span>Restore on Disable</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <div class="field">
+          <label>Sync Interval (s)</label>
+          <input type="number" id="cfgInterval" min="0" step="30" />
+        </div>
+        <div class="field">
+          <label>Healthy Threshold (%)</label>
+          <input type="number" id="cfgHealthy" min="1" max="100" />
+        </div>
+        <div class="field">
+          <label>Critical Threshold (%)</label>
+          <input type="number" id="cfgCritical" min="0" max="100" />
+        </div>
+        <div class="field">
+          <label>Priority (Healthy / Low / Crit)</label>
+          <div style="display:flex; gap:6px;">
+            <input type="number" id="cfgPrioHealthy" title="Healthy Priority" />
+            <input type="number" id="cfgPrioLow" title="Low Priority" />
+            <input type="number" id="cfgPrioCritical" title="Critical Priority" />
+          </div>
+        </div>
+        <div class="field">
+          <button onclick="saveConfig()" style="width:100%;">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Credential</th>
+              <th>Provider</th>
+              <th>Quota Windows</th>
+              <th>Bottleneck / Avg</th>
+              <th>Tier</th>
+              <th>Current (P / W)</th>
+              <th>Target (P / W)</th>
+              <th>Original (P / W)</th>
+            </tr>
+          </thead>
+          <tbody id="credTableBody">
+            <tr><td colspan="8" style="text-align:center; color:var(--muted);">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/v0/management/plugins/quota-auto-balance';
+
+    function getManagementKey() {
+      try {
+        const raw = localStorage.getItem('cli-proxy-auth');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.state && parsed.state.managementKey) {
+            return parsed.state.managementKey;
+          }
+          if (parsed && parsed.managementKey) {
+            return parsed.managementKey;
+          }
+        }
+      } catch (_) {}
+      return '';
+    }
+
+    async function apiCall(path, options = {}) {
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+      const key = getManagementKey();
+      if (key) {
+        headers['Authorization'] = 'Bearer ' + key;
+      }
+      const res = await fetch(API_BASE + '/' + path, Object.assign({}, options, { headers }));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || ('HTTP ' + res.status));
+      }
+      return data;
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorBanner');
+      if (!msg) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.style.display = 'block';
+      el.textContent = msg;
+    }
+
+    function fmtPW(p, w) {
+      const ps = (p === null || p === undefined) ? '-' : String(p);
+      const ws = (w === null || w === undefined) ? '-' : String(w);
+      return ps + ' / ' + ws;
+    }
+
+    function renderStatus(status) {
+      if (!status) return;
+      const cfg = status.config || {};
+      document.getElementById('cfgEnabled').checked = !!cfg.auto_balance_enabled;
+      document.getElementById('cfgRestoreOnDisable').checked = !!cfg.restore_on_disable;
+      document.getElementById('cfgInterval').value = cfg.sync_interval_seconds ?? 300;
+      document.getElementById('cfgHealthy').value = cfg.healthy_threshold ?? 15;
+      document.getElementById('cfgCritical').value = cfg.critical_threshold ?? 5;
+      document.getElementById('cfgPrioHealthy').value = cfg.priority_healthy ?? 0;
+      document.getElementById('cfgPrioLow').value = cfg.priority_low ?? -5;
+      document.getElementById('cfgPrioCritical').value = cfg.priority_critical ?? -10;
+
+      const badge = document.getElementById('enabledBadge');
+      if (cfg.auto_balance_enabled) {
+        badge.className = 'badge healthy';
+        badge.textContent = 'Enabled';
+      } else {
+        badge.className = 'badge neutral';
+        badge.textContent = 'Disabled';
+      }
+
+      const syncText = status.lastSyncAt
+        ? 'Last sync: ' + new Date(status.lastSyncAt).toLocaleString()
+        : 'Last sync: Never';
+      document.getElementById('lastSyncText').textContent = syncText;
+
+      const tbody = document.getElementById('credTableBody');
+      const creds = status.credentials || [];
+      if (creds.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--muted);">No credentials found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = creds.map(c => {
+        const rows = (c.quota && c.quota.rows) ? c.quota.rows : [];
+        const windowsHtml = rows.length > 0
+          ? rows.map(r => `<span class="window-pill">${r.label}: <strong>${Math.round(r.percent)}%</strong></span>`).join('')
+          : `<span style="color:var(--muted);">${(c.quota && c.quota.status) || 'Not synced'}</span>`;
+
+        const target = c.target;
+        const bottleneckStr = target
+          ? `${target.bottleneckPercent}% / ${target.averagePercent}%`
+          : '-';
+        const tierHtml = target
+          ? `<span class="badge ${target.tier}">${target.tier.toUpperCase()}</span>`
+          : `<span class="badge neutral">-</span>`;
+        const targetPW = target ? fmtPW(target.priority, target.weight) : '-';
+        const origPW = c.hasOriginal ? fmtPW(c.originalPriority, c.originalWeight) : '-';
+
+        return `
+          <tr>
+            <td><strong>${c.label || c.name}</strong><div style="font-size:0.75rem;color:var(--muted);">${c.name}</div></td>
+            <td>${c.provider || '-'}</td>
+            <td>${windowsHtml}</td>
+            <td>${bottleneckStr}</td>
+            <td>${tierHtml}</td>
+            <td><strong>${fmtPW(c.currentPriority, c.currentWeight)}</strong></td>
+            <td>${targetPW}</td>
+            <td>${origPW}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadStatus() {
+      try {
+        showError('');
+        const status = await apiCall('status');
+        renderStatus(status);
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    async function triggerSync() {
+      const btn = document.getElementById('syncNowBtn');
+      btn.disabled = true;
+      try {
+        showError('');
+        const res = await apiCall('sync', { method: 'POST', body: '{}' });
+        if (res.status) renderStatus(res.status);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function triggerRestore() {
+      const btn = document.getElementById('restoreBtn');
+      btn.disabled = true;
+      try {
+        showError('');
+        const res = await apiCall('restore', { method: 'POST', body: '{}' });
+        if (res.status) renderStatus(res.status);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function saveConfig() {
+      try {
+        showError('');
+        const payload = {
+          auto_balance_enabled: document.getElementById('cfgEnabled').checked,
+          restore_on_disable: document.getElementById('cfgRestoreOnDisable').checked,
+          sync_interval_seconds: Number(document.getElementById('cfgInterval').value),
+          healthy_threshold: Number(document.getElementById('cfgHealthy').value),
+          critical_threshold: Number(document.getElementById('cfgCritical').value),
+          priority_healthy: Number(document.getElementById('cfgPrioHealthy').value),
+          priority_low: Number(document.getElementById('cfgPrioLow').value),
+          priority_critical: Number(document.getElementById('cfgPrioCritical').value),
+        };
+        const status = await apiCall('config', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        renderStatus(status);
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    loadStatus();
+  </script>
+</body>
+</html>
