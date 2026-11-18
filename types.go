@@ -3,15 +3,19 @@ package main
 import "encoding/json"
 
 const (
-	PluginID      = "quota-auto-balance"
-	PluginName    = "Quota Auto-Balance"
-	PluginVersion = "0.1.0"
-	ABIVersion    = 1
+	PluginID         = "quota-auto-balance"
+	PluginName       = "Quota Auto-Balance"
+	PluginVersion    = "0.1.0"
+	PluginAuthor     = "brownsoo"
+	PluginRepository = "https://github.com/brownsoo/cpa-quota-auto-balance"
 
-	CapabilityManagementAPI = "management_api"
+	ABIVersion    = 1
+	SchemaVersion = 10
 
 	MethodPluginRegister     = "plugin.register"
+	MethodPluginQuiesce      = "plugin.quiesce"
 	MethodPluginReconfigure  = "plugin.reconfigure"
+	MethodPluginShutdown     = "plugin.shutdown"
 	MethodManagementRegister = "management.register"
 	MethodManagementHandle   = "management.handle"
 
@@ -30,116 +34,101 @@ type Envelope struct {
 
 // ErrorInfo describes a structured plugin or host error.
 type ErrorInfo struct {
-	Code    string `json:"code,omitempty"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-// ConfigFieldOption describes an option in a select config field.
-type ConfigFieldOption struct {
-	Label string `json:"label"`
-	Value string `json:"value"`
-}
-
-// ConfigField defines a user-configurable setting exposed in the host UI.
+// ConfigField defines a user-configurable setting exposed in the host UI (matches pluginapi.ConfigField).
 type ConfigField struct {
-	Name        string              `json:"name"`
-	Label       string              `json:"label,omitempty"`
-	Type        string              `json:"type"`
-	Description string              `json:"description,omitempty"`
-	Required    bool                `json:"required,omitempty"`
-	Default     any                 `json:"default,omitempty"`
-	Placeholder string              `json:"placeholder,omitempty"`
-	Options     []ConfigFieldOption `json:"options,omitempty"`
+	Name        string   `json:"Name"`
+	Type        string   `json:"Type"`
+	Default     any      `json:"Default,omitempty"`
+	EnumValues  []string `json:"EnumValues,omitempty"`
+	Description string   `json:"Description,omitempty"`
 }
 
-// Metadata describes the plugin registration metadata.
+// Metadata describes the plugin registration metadata (matches pluginapi.Metadata).
+// Note: Host's validPlugin() requires Name, Version, Author, and GitHubRepository to all be non-empty.
 type Metadata struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	Version       string        `json:"version"`
-	Description   string        `json:"description,omitempty"`
-	Capabilities  []string      `json:"capabilities"`
-	Providers     []string      `json:"providers,omitempty"`
-	EndpointTypes []string      `json:"endpoint_types,omitempty"`
-	Priority      int           `json:"priority,omitempty"`
-	ConfigFields  []ConfigField `json:"config_fields,omitempty"`
+	Name             string        `json:"Name"`
+	Version          string        `json:"Version"`
+	Author           string        `json:"Author"`
+	GitHubRepository string        `json:"GitHubRepository"`
+	Logo             string        `json:"Logo,omitempty"`
+	ConfigFields     []ConfigField `json:"ConfigFields,omitempty"`
 }
 
-// RegistrationRequest is passed by the host on plugin.register.
-type RegistrationRequest struct {
-	HostVersion string          `json:"host_version,omitempty"`
-	PluginDir   string          `json:"plugin_dir,omitempty"`
-	Config      json.RawMessage `json:"config,omitempty"`
-	ConfigYAML  string          `json:"config_yaml,omitempty"`
+// RPCCapabilities declares the integration hooks implemented by the plugin (matches pluginhost.rpcCapabilities).
+type RPCCapabilities struct {
+	ManagementAPI bool `json:"management_api"`
 }
 
-// RegistrationResponse is returned by plugin.register.
+// LifecycleRequest is passed by the host on plugin.register and plugin.reconfigure (matches pluginhost.rpcLifecycleRequest).
+type LifecycleRequest struct {
+	ConfigYAML         json.RawMessage `json:"config_yaml,omitempty"`
+	Config             json.RawMessage `json:"config,omitempty"`
+	PluginDir          string          `json:"plugin_dir,omitempty"`
+	SchemaVersion      uint32          `json:"schema_version,omitempty"`
+	MultiAuthProviders bool            `json:"multi_auth_providers,omitempty"`
+}
+
+// RegistrationResponse is returned by both plugin.register and plugin.reconfigure (matches pluginhost.rpcRegistration).
 type RegistrationResponse struct {
-	Metadata Metadata `json:"metadata"`
+	SchemaVersion uint32          `json:"schema_version"`
+	Metadata      Metadata        `json:"metadata"`
+	Capabilities  RPCCapabilities `json:"capabilities"`
 }
 
-// ReconfigureRequest is passed by the host on plugin.reconfigure.
-type ReconfigureRequest struct {
-	PluginDir  string          `json:"plugin_dir,omitempty"`
-	Config     json.RawMessage `json:"config,omitempty"`
-	ConfigYAML string          `json:"config_yaml,omitempty"`
-}
-
-// ReconfigureResponse is returned by plugin.reconfigure.
-type ReconfigureResponse struct {
-	Applied bool `json:"applied"`
-}
-
-// ManagementRoute declares a route under /v0/management/plugins/<id>/...
+// ManagementRoute declares a route under /v0/management/... (matches pluginapi.ManagementRoute).
 type ManagementRoute struct {
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Description string `json:"description,omitempty"`
+	Method      string `json:"Method"`
+	Path        string `json:"Path"`
+	Menu        string `json:"Menu,omitempty"`
+	Description string `json:"Description,omitempty"`
 }
 
-// ResourceRoute declares a browser-accessible route under /v0/resource/plugins/<id>/...
+// ResourceRoute declares a browser-accessible route under /v0/resource/plugins/<id>/... (matches pluginapi.ResourceRoute).
 type ResourceRoute struct {
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Menu        string `json:"menu,omitempty"`
-	Description string `json:"description,omitempty"`
+	Path        string `json:"Path"`
+	Menu        string `json:"Menu,omitempty"`
+	Description string `json:"Description,omitempty"`
 }
 
-// ManagementRegistrationResponse is returned by management.register.
+// ManagementRegistrationResponse is returned by management.register (matches pluginhost.rpcManagementRegistrationResponse).
 type ManagementRegistrationResponse struct {
-	Routes    []ManagementRoute `json:"routes"`
+	Routes    []ManagementRoute `json:"routes,omitempty"`
 	Resources []ResourceRoute   `json:"resources,omitempty"`
 }
 
-// ManagementRequest represents an HTTP request forwarded to management.handle.
+// ManagementRequest represents an HTTP request forwarded to management.handle (matches pluginhost.rpcManagementRequest).
 type ManagementRequest struct {
-	Method  string              `json:"method"`
-	Path    string              `json:"path"`
-	RawPath string              `json:"raw_path,omitempty"`
-	Query   string              `json:"query,omitempty"`
-	Headers map[string][]string `json:"headers,omitempty"`
-	Body    []byte              `json:"body,omitempty"`
+	Method         string              `json:"Method"`
+	Path           string              `json:"Path"`
+	Headers        map[string][]string `json:"Headers,omitempty"`
+	Query          map[string][]string `json:"Query,omitempty"`
+	Body           []byte              `json:"Body,omitempty"`
+	HostCallbackID string              `json:"host_callback_id,omitempty"`
 }
 
-// ManagementResponse represents an HTTP response returned by management.handle.
+// ManagementResponse represents an HTTP response returned by management.handle (matches pluginapi.ManagementResponse).
 type ManagementResponse struct {
-	Status  int                 `json:"status"`
-	Headers map[string][]string `json:"headers,omitempty"`
-	Body    []byte              `json:"body,omitempty"`
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers,omitempty"`
+	Body       []byte              `json:"Body,omitempty"`
 }
 
-// HostAuthFileEntry represents an entry returned by host.auth.list.
+// HostAuthFileEntry represents an entry returned by host.auth.list (matches pluginapi.HostAuthFileEntry).
 type HostAuthFileEntry struct {
-	ID       string         `json:"id,omitempty"`
-	Name     string         `json:"name"`
-	Type     string         `json:"type,omitempty"`
-	Provider string         `json:"provider,omitempty"`
-	Label    string         `json:"label,omitempty"`
-	Status   string         `json:"status,omitempty"`
-	Disabled bool           `json:"disabled,omitempty"`
-	Priority *int           `json:"priority,omitempty"`
-	Weight   *int           `json:"weight,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	ID        string `json:"id,omitempty"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	Name      string `json:"name"`
+	Type      string `json:"type,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Disabled  bool   `json:"disabled,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Priority  int    `json:"priority,omitempty"`
 }
 
 // HostAuthListResponse wraps the response from host.auth.list.
@@ -147,50 +136,45 @@ type HostAuthListResponse struct {
 	Files []HostAuthFileEntry `json:"files"`
 }
 
-// HostAuthGetRequest is sent to host.auth.get.
+// HostAuthGetRequest is sent to host.auth.get (matches pluginapi.HostAuthGetRequest).
 type HostAuthGetRequest struct {
-	Name string `json:"name"`
+	AuthIndex string `json:"auth_index"`
 }
 
-// HostAuthGetResponse is returned by host.auth.get.
+// HostAuthGetResponse is returned by host.auth.get (matches pluginapi.HostAuthGetResponse).
 type HostAuthGetResponse struct {
-	ID       string         `json:"id,omitempty"`
-	Name     string         `json:"name"`
-	Type     string         `json:"type,omitempty"`
-	Provider string         `json:"provider,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Raw      string         `json:"raw,omitempty"`
+	AuthIndex string          `json:"auth_index"`
+	Name      string          `json:"name,omitempty"`
+	Path      string          `json:"path,omitempty"`
+	JSON      json.RawMessage `json:"json"`
 }
 
-// HostAuthSaveRequest is sent to host.auth.save.
+// HostAuthSaveRequest is sent to host.auth.save (matches pluginapi.HostAuthSaveRequest).
 type HostAuthSaveRequest struct {
-	Name     string         `json:"name"`
-	Raw      string         `json:"raw,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Name string          `json:"name"`
+	JSON json.RawMessage `json:"json"`
 }
 
-// HostAuthSaveResponse is returned by host.auth.save.
+// HostAuthSaveResponse is returned by host.auth.save (matches pluginapi.HostAuthSaveResponse).
 type HostAuthSaveResponse struct {
-	Saved bool   `json:"saved"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
-// HostHTTPRequest is sent to host.http.do.
+// HostHTTPRequest is sent to host.http.do (matches pluginhost.rpcHostHTTPRequest).
 type HostHTTPRequest struct {
-	Method         string            `json:"method"`
-	URL            string            `json:"url"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	Body           []byte            `json:"body,omitempty"`
-	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
-	AuthID         string            `json:"auth_id,omitempty"`
+	HostCallbackID string              `json:"host_callback_id,omitempty"`
+	Method         string              `json:"method"`
+	URL            string              `json:"url"`
+	Headers        map[string][]string `json:"headers,omitempty"`
+	Body           []byte              `json:"body,omitempty"`
 }
 
-// HostHTTPResponse is returned by host.http.do.
+// HostHTTPResponse is returned by host.http.do (matches pluginapi.HTTPResponse).
 type HostHTTPResponse struct {
-	Status  int                 `json:"status"`
-	Headers map[string][]string `json:"headers,omitempty"`
-	Body    []byte              `json:"body,omitempty"`
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers,omitempty"`
+	Body       []byte              `json:"Body,omitempty"`
 }
 
 // QuotaRow represents a single quota window (e.g. 5h, 7d, model group).

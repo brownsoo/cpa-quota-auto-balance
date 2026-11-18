@@ -99,16 +99,20 @@ func TestSyncAndRestore_PreservesManualEdits(t *testing.T) {
 	host := HostClient{
 		AuthList: func() ([]HostAuthFileEntry, error) {
 			return []HostAuthFileEntry{
-				{Name: "codex-a.json", Provider: "codex"},
-				{Name: "codex-b.json", Provider: "codex"},
+				{Name: "codex-a.json", AuthIndex: "codex-a.json", Provider: "codex"},
+				{Name: "codex-b.json", AuthIndex: "codex-b.json", Provider: "codex"},
 			}, nil
 		},
-		AuthGet: func(name string) (*HostAuthGetResponse, error) {
-			return &HostAuthGetResponse{Name: name, Raw: files[name]}, nil
+		AuthGet: func(authIndex string) (*HostAuthGetResponse, error) {
+			return &HostAuthGetResponse{
+				AuthIndex: authIndex,
+				Name:      authIndex,
+				JSON:      json.RawMessage(files[authIndex]),
+			}, nil
 		},
 		AuthSave: func(req HostAuthSaveRequest) (*HostAuthSaveResponse, error) {
-			files[req.Name] = req.Raw
-			return &HostAuthSaveResponse{Saved: true, Name: req.Name}, nil
+			files[req.Name] = string(req.JSON)
+			return &HostAuthSaveResponse{Name: req.Name}, nil
 		},
 	}
 
@@ -156,5 +160,30 @@ func TestSyncAndRestore_PreservesManualEdits(t *testing.T) {
 	_ = json.Unmarshal([]byte(files["codex-b.json"]), &docB)
 	if int(docB["priority"].(float64)) != 99 || int(docB["weight"].(float64)) != 50 {
 		t.Fatalf("expected codex-b.json manual edit 99/50 preserved, got %v", docB)
+	}
+}
+
+func TestDispatchPluginRegisterAndReconfigure(t *testing.T) {
+	regResult, err := dispatchPluginMethod(MethodPluginRegister, []byte(`{"config_yaml":"YXV0b19iYWxhbmNlX2VuYWJsZWQ6IHRydWUK","schema_version":10}`))
+	if err != nil {
+		t.Fatalf("plugin.register failed: %v", err)
+	}
+	resp, ok := regResult.(RegistrationResponse)
+	if !ok {
+		t.Fatalf("expected RegistrationResponse, got %T", regResult)
+	}
+	if resp.Metadata.Name == "" || resp.Metadata.Version == "" || resp.Metadata.Author == "" || resp.Metadata.GitHubRepository == "" {
+		t.Fatalf("missing required metadata fields: %+v", resp.Metadata)
+	}
+	if !resp.Capabilities.ManagementAPI {
+		t.Fatalf("expected management_api capability to be true")
+	}
+
+	reconfResult, err := dispatchPluginMethod(MethodPluginReconfigure, []byte(`{"config_yaml":"YXV0b19iYWxhbmNlX2VuYWJsZWQ6IGZhbHNlCg==","schema_version":10}`))
+	if err != nil {
+		t.Fatalf("plugin.reconfigure failed: %v", err)
+	}
+	if _, ok := reconfResult.(RegistrationResponse); !ok {
+		t.Fatalf("expected RegistrationResponse from plugin.reconfigure, got %T", reconfResult)
 	}
 }

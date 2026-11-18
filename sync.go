@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,7 +13,7 @@ import (
 // HostClient defines the host callback interface used by BalanceEngine.
 type HostClient struct {
 	AuthList func() ([]HostAuthFileEntry, error)
-	AuthGet  func(name string) (*HostAuthGetResponse, error)
+	AuthGet  func(authIndex string) (*HostAuthGetResponse, error)
 	AuthSave func(req HostAuthSaveRequest) (*HostAuthSaveResponse, error)
 	HTTPDo   func(req HostHTTPRequest) (*HostHTTPResponse, error)
 }
@@ -132,6 +135,33 @@ func (e *BalanceEngine) restartWorker() {
 	}()
 }
 
+// readEntryRawJSON reads a credential's raw JSON via host.auth.get (using AuthIndex) or falls back to reading entry.Path.
+func (e *BalanceEngine) readEntryRawJSON(entry HostAuthFileEntry) (string, error) {
+	if e.host.AuthGet != nil {
+		idx := strings.TrimSpace(entry.AuthIndex)
+		if idx == "" {
+			idx = strings.TrimSpace(entry.Name)
+		}
+		if idx != "" {
+			resp, err := e.host.AuthGet(idx)
+			if err == nil && resp != nil && len(resp.JSON) > 0 {
+				return string(resp.JSON), nil
+			}
+			if entry.Path == "" && err != nil {
+				return "", err
+			}
+		}
+	}
+	if strings.TrimSpace(entry.Path) != "" {
+		data, err := os.ReadFile(entry.Path)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	return "", fmt.Errorf("credential JSON unavailable for %s", entry.Name)
+}
+
 // SyncAll inspects credentials (using client-provided quotas if given, otherwise fetching via host.http.do)
 // and updates priority and weight when AutoBalanceEnabled is true.
 func (e *BalanceEngine) SyncAll(clientQuotas map[string]*QuotaState) (*SyncSummary, error) {
@@ -152,7 +182,7 @@ func (e *BalanceEngine) SyncAll(clientQuotas map[string]*QuotaState) (*SyncSumma
 	now := time.Now().UnixMilli()
 	summary := &SyncSummary{SyncedAt: now}
 
-	if e.host.AuthList == nil || e.host.AuthGet == nil || e.host.AuthSave == nil {
+	if e.host.AuthList == nil || e.host.AuthSave == nil {
 		err := fmt.Errorf("host auth callbacks are not initialized")
 		e.setLastError(err.Error())
 		return summary, err
@@ -171,8 +201,8 @@ func (e *BalanceEngine) SyncAll(clientQuotas map[string]*QuotaState) (*SyncSumma
 		}
 		summary.Checked++
 
-		authDetail, err := e.host.AuthGet(entry.Name)
-		if err != nil || authDetail == nil || authDetail.Raw == "" {
+		rawJSON, err := e.readEntryRawJSON(entry)
+		if err != nil || strings.TrimSpace(rawJSON) == "" {
 			if err != nil {
 				summary.Errors = append(summary.Errors, fmt.Sprintf("%s: %v", entry.Name, err))
 			} else {
@@ -181,7 +211,7 @@ func (e *BalanceEngine) SyncAll(clientQuotas map[string]*QuotaState) (*SyncSumma
 			continue
 		}
 
-		currentPrio, currentWeight, doc, err := ExtractRoutingFromRawJSON(authDetail.Raw)
+		currentPrio, currentWeight, doc, err := ExtractRoutingFromRawJSON(rawJSON)
 		if err != nil {
 			summary.Errors = append(summary.Errors, fmt.Sprintf("%s: invalid JSON: %v", entry.Name, err))
 			continue
@@ -235,9 +265,8 @@ func (e *BalanceEngine) SyncAll(clientQuotas map[string]*QuotaState) (*SyncSumma
 		}
 
 		_, err = e.host.AuthSave(HostAuthSaveRequest{
-			Name:     entry.Name,
-			Raw:      updatedRaw,
-			Metadata: authDetail.Metadata,
+			Name: entry.Name,
+			JSON: json.RawMessage(updatedRaw),
 		})
 		if err != nil {
 			summary.Errors = append(summary.Errors, fmt.Sprintf("%s: save error: %v", entry.Name, err))
@@ -268,9 +297,18 @@ func (e *BalanceEngine) RestoreOriginals() (*SyncSummary, error) {
 	now := time.Now().UnixMilli()
 	summary := &SyncSummary{SyncedAt: now}
 
-	if e.host.AuthGet == nil || e.host.AuthSave == nil {
+	if e.host.AuthList == nil || e.host.AuthSave == nil {
 		err := fmt.Errorf("host auth callbacks are not initialized")
 		return summary, err
+	}
+
+	files, err := e.host.AuthList()
+	if err != nil {
+		return summary, err
+	}
+	entryByName := make(map[string]HostAuthFileEntry, len(files))
+	for _, f := range files {
+		entryByName[f.Name] = f
 	}
 
 	storedMap := e.originals.All()
@@ -284,14 +322,19 @@ func (e *BalanceEngine) RestoreOriginals() (*SyncSummary, error) {
 		stored := storedMap[name]
 		summary.Checked++
 
-		authDetail, err := e.host.AuthGet(name)
-		if err != nil || authDetail == nil || authDetail.Raw == "" {
+		entry, exists := entryByName[name]
+		if !exists {
+			entry = HostAuthFileEntry{Name: name, AuthIndex: name}
+		}
+
+		rawJSON, err := e.readEntryRawJSON(entry)
+		if err != nil || strings.TrimSpace(rawJSON) == "" {
 			e.originals.Delete(name)
 			summary.Skipped++
 			continue
 		}
 
-		currentPrio, currentWeight, doc, err := ExtractRoutingFromRawJSON(authDetail.Raw)
+		currentPrio, currentWeight, doc, err := ExtractRoutingFromRawJSON(rawJSON)
 		if err != nil {
 			summary.Errors = append(summary.Errors, fmt.Sprintf("%s: invalid JSON: %v", name, err))
 			continue
@@ -321,9 +364,8 @@ func (e *BalanceEngine) RestoreOriginals() (*SyncSummary, error) {
 		}
 
 		_, err = e.host.AuthSave(HostAuthSaveRequest{
-			Name:     name,
-			Raw:      updatedRaw,
-			Metadata: authDetail.Metadata,
+			Name: name,
+			JSON: json.RawMessage(updatedRaw),
 		})
 		if err != nil {
 			summary.Errors = append(summary.Errors, fmt.Sprintf("%s: restore error: %v", name, err))
@@ -373,18 +415,16 @@ func (e *BalanceEngine) GetStatus() (*StatusResponse, error) {
 		if entry.Name == "" {
 			continue
 		}
-		currentPrio := entry.Priority
-		currentWeight := entry.Weight
+		var currentPrio *int
+		var currentWeight *int
 		var doc map[string]any
 
-		if e.host.AuthGet != nil {
-			if detail, err := e.host.AuthGet(entry.Name); err == nil && detail != nil && detail.Raw != "" {
-				p, w, d, err := ExtractRoutingFromRawJSON(detail.Raw)
-				if err == nil {
-					currentPrio = p
-					currentWeight = w
-					doc = d
-				}
+		if rawJSON, err := e.readEntryRawJSON(entry); err == nil && strings.TrimSpace(rawJSON) != "" {
+			p, w, d, err := ExtractRoutingFromRawJSON(rawJSON)
+			if err == nil {
+				currentPrio = p
+				currentWeight = w
+				doc = d
 			}
 		}
 

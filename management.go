@@ -11,34 +11,37 @@ import (
 var dashboardHTML []byte
 
 // BuildManagementRegistration returns the management API and resource routes exposed by this plugin.
+// Note: ManagementRoute.Path is resolved under /v0/management/ by the host, so "/plugins/quota-auto-balance/status"
+// registers at "/v0/management/plugins/quota-auto-balance/status".
+// ResourceRoute.Path is resolved under "/v0/resource/plugins/quota-auto-balance/" by the host.
 func BuildManagementRegistration() ManagementRegistrationResponse {
+	base := "/plugins/" + PluginID + "/"
 	return ManagementRegistrationResponse{
 		Routes: []ManagementRoute{
 			{
 				Method:      "GET",
-				Path:        "status",
+				Path:        base + "status",
 				Description: "Get current auto-balance configuration, credential routing state, and quota targets.",
 			},
 			{
 				Method:      "POST",
-				Path:        "sync",
+				Path:        base + "sync",
 				Description: "Trigger an immediate quota inspection and auto-balance synchronization.",
 			},
 			{
 				Method:      "POST",
-				Path:        "restore",
+				Path:        base + "restore",
 				Description: "Restore all tracked credentials to their original manual priority and weight values.",
 			},
 			{
 				Method:      "POST",
-				Path:        "config",
+				Path:        base + "config",
 				Description: "Update runtime auto-balance configuration.",
 			},
 		},
 		Resources: []ResourceRoute{
 			{
-				Method:      "GET",
-				Path:        "dashboard",
+				Path:        "/dashboard",
 				Menu:        "Quota Auto-Balance",
 				Description: "Auto-balance credential priority and weight by remaining quota",
 			},
@@ -54,12 +57,12 @@ type syncRequestPayload struct {
 // and /v0/resource/plugins/quota-auto-balance/...
 func (e *BalanceEngine) HandleManagementRequest(req ManagementRequest) ManagementResponse {
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
-	subPath := extractSubPath(req.Path, req.RawPath)
+	subPath := extractSubPath(req.Path)
 
 	switch {
 	case method == "GET" && (subPath == "dashboard" || subPath == "" || subPath == "index.html"):
 		return ManagementResponse{
-			Status: http.StatusOK,
+			StatusCode: http.StatusOK,
 			Headers: map[string][]string{
 				"Content-Type":  {"text/html; charset=utf-8"},
 				"Cache-Control": {"no-store"},
@@ -125,12 +128,11 @@ func (e *BalanceEngine) HandleManagementRequest(req ManagementRequest) Managemen
 	}
 }
 
-func extractSubPath(pathStr, rawPath string) string {
+func extractSubPath(pathStr string) string {
 	p := strings.TrimSpace(pathStr)
-	if p == "" {
-		p = strings.TrimSpace(rawPath)
-	}
 	p = strings.TrimPrefix(p, "/v0/management/plugins/"+PluginID+"/")
+	p = strings.TrimPrefix(p, "/v8/management/plugins/"+PluginID+"/")
+	p = strings.TrimPrefix(p, "/plugins/"+PluginID+"/")
 	p = strings.TrimPrefix(p, "/v0/resource/plugins/"+PluginID+"/")
 	p = strings.Trim(p, "/")
 	return p
@@ -139,7 +141,7 @@ func extractSubPath(pathStr, rawPath string) string {
 func jsonResponse(status int, payload any) ManagementResponse {
 	data, _ := json.Marshal(payload)
 	return ManagementResponse{
-		Status: status,
+		StatusCode: status,
 		Headers: map[string][]string{
 			"Content-Type":  {"application/json; charset=utf-8"},
 			"Cache-Control": {"no-store"},

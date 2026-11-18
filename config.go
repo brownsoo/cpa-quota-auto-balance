@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -38,61 +39,72 @@ func PluginConfigFields() []ConfigField {
 	return []ConfigField{
 		{
 			Name:        "auto_balance_enabled",
-			Label:       "Enable Auto-Balance",
 			Type:        "boolean",
 			Description: "Automatically synchronize credential priority and weight based on remaining quota windows.",
 			Default:     def.AutoBalanceEnabled,
 		},
 		{
 			Name:        "sync_interval_seconds",
-			Label:       "Sync Interval (seconds)",
-			Type:        "number",
+			Type:        "integer",
 			Description: "Background quota polling and auto-balance interval in seconds (0 to disable periodic polling).",
 			Default:     def.SyncIntervalSeconds,
 		},
 		{
 			Name:        "healthy_threshold",
-			Label:       "Healthy Quota Threshold (%)",
 			Type:        "number",
 			Description: "Minimum bottleneck remaining quota percentage for the Healthy priority tier.",
 			Default:     def.HealthyThreshold,
 		},
 		{
 			Name:        "critical_threshold",
-			Label:       "Critical Quota Threshold (%)",
 			Type:        "number",
 			Description: "Bottleneck remaining quota percentage below which a credential enters the Critical tier (weight = 1).",
 			Default:     def.CriticalThreshold,
 		},
 		{
 			Name:        "priority_healthy",
-			Label:       "Healthy Tier Priority",
-			Type:        "number",
+			Type:        "integer",
 			Description: "Routing priority assigned when bottleneck quota >= Healthy Threshold (default 0 matches CPA default).",
 			Default:     def.PriorityHealthy,
 		},
 		{
 			Name:        "priority_low",
-			Label:       "Low Tier Priority",
-			Type:        "number",
+			Type:        "integer",
 			Description: "Routing priority assigned when Critical Threshold <= bottleneck quota < Healthy Threshold.",
 			Default:     def.PriorityLow,
 		},
 		{
 			Name:        "priority_critical",
-			Label:       "Critical Tier Priority",
-			Type:        "number",
+			Type:        "integer",
 			Description: "Routing priority assigned when bottleneck quota < Critical Threshold.",
 			Default:     def.PriorityCritical,
 		},
 		{
 			Name:        "restore_on_disable",
-			Label:       "Restore Originals on Disable",
 			Type:        "boolean",
 			Description: "Automatically restore manual priority and weight values when Auto-Balance is turned off.",
 			Default:     def.RestoreOnDisable,
 		},
 	}
+}
+
+// DecodeConfigYAML extracts a string from a JSON field that may be a base64-encoded []byte or a plain string.
+func DecodeConfigYAML(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var bytesVal []byte
+	if err := json.Unmarshal(raw, &bytesVal); err == nil && len(bytesVal) > 0 {
+		return string(bytesVal)
+	}
+	var strVal string
+	if err := json.Unmarshal(raw, &strVal); err == nil && strVal != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(strVal); err == nil && len(decoded) > 0 {
+			return string(decoded)
+		}
+		return strVal
+	}
+	return ""
 }
 
 // ParseConfig parses a Config from raw JSON and/or YAML strings, falling back to DefaultConfig().
@@ -178,7 +190,6 @@ func applyConfigMap(cfg *Config, m map[string]any) {
 
 func parseSimpleYAMLMap(yamlStr string) map[string]any {
 	out := make(map[string]any)
-	// First check if the YAML string is actually valid JSON
 	trimmed := strings.TrimSpace(yamlStr)
 	if strings.HasPrefix(trimmed, "{") {
 		_ = json.Unmarshal([]byte(trimmed), &out)

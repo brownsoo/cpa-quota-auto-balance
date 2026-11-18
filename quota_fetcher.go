@@ -117,15 +117,15 @@ func FetchCredentialQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo
 
 	switch provider {
 	case "codex":
-		return fetchCodexQuota(entry, rawDoc, httpDo, now)
+		return fetchCodexQuota(rawDoc, httpDo, now)
 	case "claude":
-		return fetchClaudeQuota(entry, rawDoc, httpDo, now)
+		return fetchClaudeQuota(rawDoc, httpDo, now)
 	case "kimi":
-		return fetchKimiQuota(entry, rawDoc, httpDo, now)
+		return fetchKimiQuota(rawDoc, httpDo, now)
 	case "xai":
-		return fetchXaiQuota(entry, rawDoc, httpDo, now)
+		return fetchXaiQuota(rawDoc, httpDo, now)
 	case "antigravity":
-		return fetchAntigravityQuota(entry, rawDoc, httpDo, now)
+		return fetchAntigravityQuota(rawDoc, httpDo, now)
 	default:
 		return &QuotaState{
 			Status:    "unsupported",
@@ -134,31 +134,29 @@ func FetchCredentialQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo
 	}
 }
 
-func fetchCodexQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
-	headers := map[string]string{
-		"Accept":       "application/json",
-		"Content-Type": "application/json",
-		"User-Agent":   "codex_cli_rs/0.76.0",
+func fetchCodexQuota(rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
+	headers := map[string][]string{
+		"Accept":       {"application/json"},
+		"Content-Type": {"application/json"},
+		"User-Agent":   {"codex_cli_rs/0.76.0"},
 	}
 	if token := extractAccessToken(rawDoc); token != "" {
-		headers["Authorization"] = "Bearer " + token
+		headers["Authorization"] = []string{"Bearer " + token}
 	}
 	if accountID := extractAccountID(rawDoc); accountID != "" {
-		headers["Chatgpt-Account-Id"] = accountID
+		headers["Chatgpt-Account-Id"] = []string{accountID}
 	}
 
 	resp, err := httpDo(HostHTTPRequest{
-		Method:         "GET",
-		URL:            codexUsageURL,
-		Headers:        headers,
-		TimeoutSeconds: 15,
-		AuthID:         entry.ID,
+		Method:  "GET",
+		URL:     codexUsageURL,
+		Headers: headers,
 	})
 	if err != nil {
 		return &QuotaState{Status: "error", Error: err.Error(), UpdatedAt: now}
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.Status), UpdatedAt: now}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.StatusCode), UpdatedAt: now}
 	}
 
 	var payload map[string]any
@@ -218,28 +216,26 @@ func parseCodexUsageRows(payload map[string]any) []QuotaRow {
 	return rows
 }
 
-func fetchClaudeQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
-	headers := map[string]string{
-		"Accept":         "application/json",
-		"Content-Type":   "application/json",
-		"anthropic-beta": "oauth-2025-04-20",
+func fetchClaudeQuota(rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
+	headers := map[string][]string{
+		"Accept":         {"application/json"},
+		"Content-Type":   {"application/json"},
+		"anthropic-beta": {"oauth-2025-04-20"},
 	}
 	if token := extractAccessToken(rawDoc); token != "" {
-		headers["Authorization"] = "Bearer " + token
+		headers["Authorization"] = []string{"Bearer " + token}
 	}
 
 	resp, err := httpDo(HostHTTPRequest{
-		Method:         "GET",
-		URL:            claudeUsageURL,
-		Headers:        headers,
-		TimeoutSeconds: 15,
-		AuthID:         entry.ID,
+		Method:  "GET",
+		URL:     claudeUsageURL,
+		Headers: headers,
 	})
 	if err != nil {
 		return &QuotaState{Status: "error", Error: err.Error(), UpdatedAt: now}
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.Status), UpdatedAt: now}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.StatusCode), UpdatedAt: now}
 	}
 
 	var payload map[string]any
@@ -269,20 +265,13 @@ func fetchClaudeQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo fun
 		if !ok {
 			continue
 		}
-		// Claude returns utilization in 0..100 (or 0..1 if normalized)
-		usedPct := util
-		if usedPct <= 1.0 && usedPct > 0 && !strings.Contains(fmt.Sprintf("%v", win["utilization"]), ".") {
-			// integer 1 means 1%
-		} else if usedPct > 0 && usedPct < 1.0 {
-			// Check if utilization is 0..100 scale in Anthropic OAuth usage API (it is 0..100, e.g. 14.0)
-		}
 		group := ""
 		if spec.scoped {
 			group = spec.label
 		}
 		rows = append(rows, QuotaRow{
 			Label:      spec.label,
-			Percent:    clampPercent(100 - usedPct),
+			Percent:    clampPercent(100 - util),
 			Scoped:     spec.scoped,
 			GroupLabel: group,
 		})
@@ -294,26 +283,24 @@ func fetchClaudeQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo fun
 	return &QuotaState{Status: "ok", Rows: rows, UpdatedAt: now}
 }
 
-func fetchKimiQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
-	headers := map[string]string{
-		"Accept": "application/json",
+func fetchKimiQuota(rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
+	headers := map[string][]string{
+		"Accept": {"application/json"},
 	}
 	if token := extractAccessToken(rawDoc); token != "" {
-		headers["Authorization"] = "Bearer " + token
+		headers["Authorization"] = []string{"Bearer " + token}
 	}
 
 	resp, err := httpDo(HostHTTPRequest{
-		Method:         "GET",
-		URL:            kimiUsageURL,
-		Headers:        headers,
-		TimeoutSeconds: 15,
-		AuthID:         entry.ID,
+		Method:  "GET",
+		URL:     kimiUsageURL,
+		Headers: headers,
 	})
 	if err != nil {
 		return &QuotaState{Status: "error", Error: err.Error(), UpdatedAt: now}
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.Status), UpdatedAt: now}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.StatusCode), UpdatedAt: now}
 	}
 
 	var payload map[string]any
@@ -363,26 +350,24 @@ func computeRemainingFromLimitUsed(m map[string]any) (float64, bool) {
 	return 0, false
 }
 
-func fetchXaiQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
-	headers := map[string]string{
-		"Accept": "application/json",
+func fetchXaiQuota(rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
+	headers := map[string][]string{
+		"Accept": {"application/json"},
 	}
 	if token := extractAccessToken(rawDoc); token != "" {
-		headers["Authorization"] = "Bearer " + token
+		headers["Authorization"] = []string{"Bearer " + token}
 	}
 
 	resp, err := httpDo(HostHTTPRequest{
-		Method:         "GET",
-		URL:            xaiApiKeyURL,
-		Headers:        headers,
-		TimeoutSeconds: 15,
-		AuthID:         entry.ID,
+		Method:  "GET",
+		URL:     xaiApiKeyURL,
+		Headers: headers,
 	})
 	if err != nil {
 		return &QuotaState{Status: "error", Error: err.Error(), UpdatedAt: now}
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.Status), UpdatedAt: now}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.StatusCode), UpdatedAt: now}
 	}
 
 	var payload map[string]any
@@ -404,14 +389,14 @@ func fetchXaiQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(H
 	}
 }
 
-func fetchAntigravityQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
-	headers := map[string]string{
-		"Accept":       "application/json",
-		"Content-Type": "application/json",
-		"User-Agent":   "antigravity/1.11.5",
+func fetchAntigravityQuota(rawDoc map[string]any, httpDo func(HostHTTPRequest) (*HostHTTPResponse, error), now int64) *QuotaState {
+	headers := map[string][]string{
+		"Accept":       {"application/json"},
+		"Content-Type": {"application/json"},
+		"User-Agent":   {"antigravity/1.11.5"},
 	}
 	if token := extractAccessToken(rawDoc); token != "" {
-		headers["Authorization"] = "Bearer " + token
+		headers["Authorization"] = []string{"Bearer " + token}
 	}
 
 	bodyBytes := []byte("{}")
@@ -420,18 +405,16 @@ func fetchAntigravityQuota(entry HostAuthFileEntry, rawDoc map[string]any, httpD
 	}
 
 	resp, err := httpDo(HostHTTPRequest{
-		Method:         "POST",
-		URL:            antigravityQuotaURL,
-		Headers:        headers,
-		Body:           bodyBytes,
-		TimeoutSeconds: 15,
-		AuthID:         entry.ID,
+		Method:  "POST",
+		URL:     antigravityQuotaURL,
+		Headers: headers,
+		Body:    bodyBytes,
 	})
 	if err != nil {
 		return &QuotaState{Status: "error", Error: err.Error(), UpdatedAt: now}
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.Status), UpdatedAt: now}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &QuotaState{Status: "error", Error: fmt.Sprintf("HTTP %d", resp.StatusCode), UpdatedAt: now}
 	}
 
 	var payload map[string]any

@@ -157,35 +157,37 @@ func writeCBuffer(buf *C.cliproxy_buffer, data []byte) {
 	buf.len = C.size_t(len(data))
 }
 
+func buildRegistrationResponse() RegistrationResponse {
+	return RegistrationResponse{
+		SchemaVersion: SchemaVersion,
+		Metadata: Metadata{
+			Name:             PluginName,
+			Version:          PluginVersion,
+			Author:           PluginAuthor,
+			GitHubRepository: PluginRepository,
+			ConfigFields:     PluginConfigFields(),
+		},
+		Capabilities: RPCCapabilities{
+			ManagementAPI: true,
+		},
+	}
+}
+
 func dispatchPluginMethod(method string, reqBytes []byte) (any, error) {
 	switch method {
-	case MethodPluginRegister:
-		var req RegistrationRequest
+	case MethodPluginRegister, MethodPluginReconfigure:
+		var req LifecycleRequest
 		if len(reqBytes) > 0 {
 			_ = json.Unmarshal(reqBytes, &req)
 		}
-		cfg := ParseConfig(req.Config, req.ConfigYAML)
-		globalEngine.Configure(req.PluginDir, cfg, false)
+		yamlStr := DecodeConfigYAML(req.ConfigYAML)
+		cfg := ParseConfig(req.Config, yamlStr)
+		globalEngine.Configure(req.PluginDir, cfg, method == MethodPluginReconfigure)
+		return buildRegistrationResponse(), nil
 
-		return RegistrationResponse{
-			Metadata: Metadata{
-				ID:           PluginID,
-				Name:         PluginName,
-				Version:      PluginVersion,
-				Description:  "Automatically balances credential priority and weight based on remaining quota windows, preserving manual settings.",
-				Capabilities: []string{CapabilityManagementAPI},
-				ConfigFields: PluginConfigFields(),
-			},
-		}, nil
-
-	case MethodPluginReconfigure:
-		var req ReconfigureRequest
-		if len(reqBytes) > 0 {
-			_ = json.Unmarshal(reqBytes, &req)
-		}
-		cfg := ParseConfig(req.Config, req.ConfigYAML)
-		globalEngine.Configure(req.PluginDir, cfg, true)
-		return ReconfigureResponse{Applied: true}, nil
+	case MethodPluginQuiesce, MethodPluginShutdown:
+		globalEngine.Shutdown()
+		return map[string]any{}, nil
 
 	case MethodManagementRegister:
 		return BuildManagementRegistration(), nil
@@ -270,9 +272,9 @@ func hostAuthList() ([]HostAuthFileEntry, error) {
 	return resp.Files, nil
 }
 
-func hostAuthGet(name string) (*HostAuthGetResponse, error) {
+func hostAuthGet(authIndex string) (*HostAuthGetResponse, error) {
 	var resp HostAuthGetResponse
-	if err := callHost(HostMethodAuthGet, HostAuthGetRequest{Name: name}, &resp); err != nil {
+	if err := callHost(HostMethodAuthGet, HostAuthGetRequest{AuthIndex: authIndex}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
