@@ -18,7 +18,7 @@ jobs:
             ext: dylib
           - goos: darwin
             goarch: amd64
-            runner: macos-13
+            runner: macos-15-intel
             ext: dylib
           - goos: linux
             goarch: amd64
@@ -43,20 +43,35 @@ jobs:
       - name: Run Tests
         run: go test -v ./...
 
-      - name: Build Shared Library
+      - name: Build and Package Plugin Archive
+        shell: bash
         env:
           CGO_ENABLED: '1'
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          EXT: ${{ matrix.ext }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          mkdir -p dist
-          go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o dist/quota-auto-balance-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.ext }} .
+          VERSION="${REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION="0.1.0"
+          fi
+          mkdir -p build dist
+          LIB_NAME="quota-auto-balance.${EXT}"
+          ZIP_NAME="quota-auto-balance_${VERSION}_${GOOS}_${GOARCH}.zip"
+          go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o "build/${LIB_NAME}" .
+          cd build
+          if command -v zip >/dev/null 2>&1; then
+            zip "../dist/${ZIP_NAME}" "${LIB_NAME}"
+          else
+            powershell.exe -NoProfile -Command "Compress-Archive -Path '${LIB_NAME}' -DestinationPath '../dist/${ZIP_NAME}' -Force"
+          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: quota-auto-balance-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/quota-auto-balance-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.ext }}
+          path: dist/*.zip
 
   release:
     needs: build
@@ -71,8 +86,16 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Generate checksums.txt
+        run: |
+          cd release-assets
+          sha256sum *.zip > checksums.txt
+          cat checksums.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/*.zip
+            release-assets/checksums.txt
           generate_release_notes: true
