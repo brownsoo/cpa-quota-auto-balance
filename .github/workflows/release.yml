@@ -100,7 +100,7 @@ jobs:
         run: |
           VERSION="${REF_NAME#v}"
           if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
-            VERSION="0.1.1"
+            VERSION="0.1.2"
           fi
           mkdir -p build dist
           LIB_NAME="quota-auto-balance.${EXT}"

@@ -5,7 +5,7 @@ import "encoding/json"
 const (
 	PluginID         = "quota-auto-balance"
 	PluginName       = "Quota Auto-Balance"
-	PluginVersion    = "0.1.1"
+	PluginVersion    = "0.1.2"
 	PluginAuthor     = "brownsoo"
 	PluginRepository = "https://github.com/brownsoo/cpa-quota-auto-balance"
 
