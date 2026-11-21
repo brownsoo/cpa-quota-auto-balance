@@ -144,8 +144,9 @@ func jsonResponse(status int, payload any) ManagementResponse {
 	return ManagementResponse{
 		StatusCode: status,
 		Headers: map[string][]string{
-			"Content-Type":  {"application/json; charset=utf-8"},
-			"Cache-Control": {"no-store"},
+			"Content-Type":           {"application/json; charset=utf-8"},
+			"Cache-Control":          {"no-store"},
+			"X-Content-Type-Options": {"nosniff"},
 		},
 		Body: data,
 	}
