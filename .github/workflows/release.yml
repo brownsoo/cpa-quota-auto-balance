@@ -2,11 +2,28 @@ name: Build and Release CPA Plugin
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
 
 jobs:
+  test-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Dashboard XSS Regression Tests
+        run: node --test ui_template_test.mjs
+
   build:
     strategy:
       fail-fast: false
@@ -22,11 +39,19 @@ jobs:
             ext: dylib
           - goos: linux
             goarch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
+            ext: so
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
             ext: so
           - goos: windows
             goarch: amd64
             runner: windows-latest
+            ext: dll
+          - goos: windows
+            goarch: arm64
+            runner: windows-11-arm
             ext: dll
 
     runs-on: ${{ matrix.runner }}
@@ -40,7 +65,22 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Set up llvm-mingw for Windows ARM64
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/llvm-mingw-20261117-ucrt-aarch64.zip"
+          $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
+          $dest = "$env:RUNNER_TEMP\llvm-mingw"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $binDir = (Get-ChildItem -Path $dest -Directory | Select-Object -First 1).FullName + "\bin"
+          "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "CC=aarch64-w64-mingw32-gcc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run Tests
+        env:
+          CGO_ENABLED: '1'
         run: go test -v ./...
 
       - name: Build and Package Plugin Archive
@@ -53,8 +93,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           VERSION="${REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
-            VERSION="0.1.0"
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+            VERSION="0.1.1"
           fi
           mkdir -p build dist
           LIB_NAME="quota-auto-balance.${EXT}"
@@ -72,11 +112,12 @@ jobs:
         with:
           name: quota-auto-balance-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*.zip
+          if-no-files-found: error
 
   release:
-    needs: build
+    needs: [test-ui, build]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -86,10 +127,19 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums.txt
+      - name: Verify Six-Platform Matrix and Generate checksums.txt
         run: |
           cd release-assets
+          VERSION="${GITHUB_REF_NAME#v}"
+          for target in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64 windows_amd64 windows_arm64; do
+            FILE="quota-auto-balance_${VERSION}_${target}.zip"
+            if [ ! -f "$FILE" ]; then
+              echo "Missing required platform archive: $FILE"
+              exit 1
+            fi
+          done
           sha256sum *.zip > checksums.txt
+          sha256sum -c checksums.txt
           cat checksums.txt
 
       - name: Create GitHub Release

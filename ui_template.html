@@ -313,6 +313,85 @@
       return ps + ' / ' + ws;
     }
 
+    const ALLOWED_TIERS = new Set(['healthy', 'low', 'critical', 'neutral']);
+
+    function createTextEl(tag, text, className) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      el.textContent = text;
+      return el;
+    }
+
+    // Build table rows strictly via DOM APIs (textContent) to prevent HTML injection / XSS
+    // from untrusted credential labels, names, providers, or quota metadata.
+    function buildCredentialRow(c) {
+      const tr = document.createElement('tr');
+
+      // Credential column
+      const credTd = document.createElement('td');
+      credTd.appendChild(createTextEl('strong', String(c.label || c.name || '-')));
+      const nameDiv = createTextEl('div', String(c.name || ''));
+      nameDiv.style.fontSize = '0.75rem';
+      nameDiv.style.color = 'var(--muted)';
+      credTd.appendChild(nameDiv);
+      tr.appendChild(credTd);
+
+      // Provider column
+      tr.appendChild(createTextEl('td', String(c.provider || '-')));
+
+      // Quota Windows column
+      const windowsTd = document.createElement('td');
+      const rows = (c.quota && Array.isArray(c.quota.rows)) ? c.quota.rows : [];
+      if (rows.length > 0) {
+        for (const r of rows) {
+          const pill = document.createElement('span');
+          pill.className = 'window-pill';
+          pill.appendChild(document.createTextNode(String(r.label ?? '') + ': '));
+          const pct = Number.isFinite(Number(r.percent)) ? Math.round(Number(r.percent)) : 0;
+          pill.appendChild(createTextEl('strong', pct + '%'));
+          windowsTd.appendChild(pill);
+        }
+      } else {
+        const emptySpan = createTextEl('span', String((c.quota && c.quota.status) || 'Not synced'));
+        emptySpan.style.color = 'var(--muted)';
+        windowsTd.appendChild(emptySpan);
+      }
+      tr.appendChild(windowsTd);
+
+      // Bottleneck / Avg column
+      const target = c.target;
+      const bottleneckStr = target
+        ? `${target.bottleneckPercent}% / ${target.averagePercent}%`
+        : '-';
+      tr.appendChild(createTextEl('td', bottleneckStr));
+
+      // Tier column (whitelist CSS class to prevent class attribute injection)
+      const tierTd = document.createElement('td');
+      if (target) {
+        const rawTier = String(target.tier || '');
+        const safeTierClass = ALLOWED_TIERS.has(rawTier) ? rawTier : 'neutral';
+        tierTd.appendChild(createTextEl('span', rawTier ? rawTier.toUpperCase() : '-', 'badge ' + safeTierClass));
+      } else {
+        tierTd.appendChild(createTextEl('span', '-', 'badge neutral'));
+      }
+      tr.appendChild(tierTd);
+
+      // Current (P / W) column
+      const currentTd = document.createElement('td');
+      currentTd.appendChild(createTextEl('strong', fmtPW(c.currentPriority, c.currentWeight)));
+      tr.appendChild(currentTd);
+
+      // Target (P / W) column
+      const targetPW = target ? fmtPW(target.priority, target.weight) : '-';
+      tr.appendChild(createTextEl('td', targetPW));
+
+      // Original (P / W) column
+      const origPW = c.hasOriginal ? fmtPW(c.originalPriority, c.originalWeight) : '-';
+      tr.appendChild(createTextEl('td', origPW));
+
+      return tr;
+    }
+
     function renderStatus(status) {
       if (!status) return;
       const cfg = status.config || {};
@@ -340,41 +419,19 @@
       document.getElementById('lastSyncText').textContent = syncText;
 
       const tbody = document.getElementById('credTableBody');
-      const creds = status.credentials || [];
+      const creds = Array.isArray(status.credentials) ? status.credentials : [];
       if (creds.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--muted);">No credentials found.</td></tr>';
+        const tr = document.createElement('tr');
+        const td = createTextEl('td', 'No credentials found.');
+        td.colSpan = 8;
+        td.style.textAlign = 'center';
+        td.style.color = 'var(--muted)';
+        tr.appendChild(td);
+        tbody.replaceChildren(tr);
         return;
       }
 
-      tbody.innerHTML = creds.map(c => {
-        const rows = (c.quota && c.quota.rows) ? c.quota.rows : [];
-        const windowsHtml = rows.length > 0
-          ? rows.map(r => `<span class="window-pill">${r.label}: <strong>${Math.round(r.percent)}%</strong></span>`).join('')
-          : `<span style="color:var(--muted);">${(c.quota && c.quota.status) || 'Not synced'}</span>`;
-
-        const target = c.target;
-        const bottleneckStr = target
-          ? `${target.bottleneckPercent}% / ${target.averagePercent}%`
-          : '-';
-        const tierHtml = target
-          ? `<span class="badge ${target.tier}">${target.tier.toUpperCase()}</span>`
-          : `<span class="badge neutral">-</span>`;
-        const targetPW = target ? fmtPW(target.priority, target.weight) : '-';
-        const origPW = c.hasOriginal ? fmtPW(c.originalPriority, c.originalWeight) : '-';
-
-        return `
-          <tr>
-            <td><strong>${c.label || c.name}</strong><div style="font-size:0.75rem;color:var(--muted);">${c.name}</div></td>
-            <td>${c.provider || '-'}</td>
-            <td>${windowsHtml}</td>
-            <td>${bottleneckStr}</td>
-            <td>${tierHtml}</td>
-            <td><strong>${fmtPW(c.currentPriority, c.currentWeight)}</strong></td>
-            <td>${targetPW}</td>
-            <td>${origPW}</td>
-          </tr>
-        `;
-      }).join('');
+      tbody.replaceChildren(...creds.map(buildCredentialRow));
     }
 
     async function loadStatus() {
