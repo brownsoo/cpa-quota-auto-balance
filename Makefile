@@ -15,7 +15,7 @@ endif
 OUTPUT := $(BUILD_DIR)/$(PLUGIN_ID)-$(GOOS)-$(GOARCH).$(EXT)
 LOCAL_LIB := $(BUILD_DIR)/$(PLUGIN_ID).$(EXT)
 
-.PHONY: all build test clean
+.PHONY: all build test test-go test-ui clean
 
 all: build
 
@@ -25,8 +25,13 @@ build:
 	@cp $(OUTPUT) $(LOCAL_LIB)
 	@echo "Built $(OUTPUT) and $(LOCAL_LIB)"
 
-test:
+test-go:
 	go test -v ./...
+
+test-ui:
+	node --test ui_template_test.mjs
+
+test: test-go test-ui
 
 clean:
 	rm -rf $(BUILD_DIR)

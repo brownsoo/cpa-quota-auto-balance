@@ -187,9 +187,9 @@
         <p id="subtitleText">남은 쿼터(5h/7d/모델 그룹) 병목률에 따라 인증 파일의 Priority와 Weight를 자동 조정합니다.</p>
       </div>
       <div class="toolbar">
-        <button id="syncNowBtn" class="primary" onclick="triggerSync()">Sync Now</button>
-        <button id="restoreBtn" onclick="triggerRestore()">Restore Originals</button>
-        <button onclick="loadStatus()">Refresh</button>
+        <button id="syncNowBtn" class="primary">Sync Now</button>
+        <button id="restoreBtn">Restore Originals</button>
+        <button id="refreshBtn">Refresh</button>
       </div>
     </header>
 
@@ -203,11 +203,11 @@
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
-            <input type="checkbox" id="cfgEnabled" onchange="saveConfig()" />
+            <input type="checkbox" id="cfgEnabled" />
             <span>Enable Auto-Balance</span>
           </label>
           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
-            <input type="checkbox" id="cfgRestoreOnDisable" onchange="saveConfig()" />
+            <input type="checkbox" id="cfgRestoreOnDisable" />
             <span>Restore on Disable</span>
           </label>
         </div>
@@ -235,7 +235,7 @@
           </div>
         </div>
         <div class="field">
-          <button onclick="saveConfig()" style="width:100%;">Save Settings</button>
+          <button id="saveConfigBtn" style="width:100%;">Save Settings</button>
         </div>
       </div>
     </div>
@@ -347,8 +347,10 @@
           const pill = document.createElement('span');
           pill.className = 'window-pill';
           pill.appendChild(document.createTextNode(String(r.label ?? '') + ': '));
-          const pct = Number.isFinite(Number(r.percent)) ? Math.round(Number(r.percent)) : 0;
-          pill.appendChild(createTextEl('strong', pct + '%'));
+          const pctText = (typeof r.percent === 'number' && Number.isFinite(r.percent))
+            ? (Math.round(r.percent) + '%')
+            : '-';
+          pill.appendChild(createTextEl('strong', pctText));
           windowsTd.appendChild(pill);
         }
       } else {
@@ -494,6 +496,15 @@
         showError(err.message);
       }
     }
+
+    // Bind UI interactions via addEventListener instead of inline on* attributes
+    // so stricter Content Security Policies remain viable.
+    document.getElementById('syncNowBtn').addEventListener('click', triggerSync);
+    document.getElementById('restoreBtn').addEventListener('click', triggerRestore);
+    document.getElementById('refreshBtn').addEventListener('click', loadStatus);
+    document.getElementById('cfgEnabled').addEventListener('change', saveConfig);
+    document.getElementById('cfgRestoreOnDisable').addEventListener('change', saveConfig);
+    document.getElementById('saveConfigBtn').addEventListener('click', saveConfig);
 
     loadStatus();
   </script>
