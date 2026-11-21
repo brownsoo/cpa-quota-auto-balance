@@ -64,8 +64,9 @@ func (e *BalanceEngine) HandleManagementRequest(req ManagementRequest) Managemen
 		return ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers: map[string][]string{
-				"Content-Type":  {"text/html; charset=utf-8"},
-				"Cache-Control": {"no-store"},
+				"Content-Type":           {"text/html; charset=utf-8"},
+				"Cache-Control":          {"no-store"},
+				"X-Content-Type-Options": {"nosniff"},
 			},
 			Body: dashboardHTML,
 		}
