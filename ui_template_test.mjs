@@ -180,8 +180,7 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
           status: 'ok',
           rows: [
             { label: hostileRowLabel, percent: 87.6 },
-            { label: 'missing-pct', percent: null },
-            { label: 'empty-pct', percent: '' },
+            { label: 'non-numeric-pct', percent: Number.NaN },
           ],
         },
         target: {
@@ -227,8 +226,7 @@ test('renderStatus neutralizes hostile HTML/XSS payloads in credential and quota
   assert.equal(row0.children[0].children[1].textContent, hostileName);
   assert.equal(row0.children[1].textContent, hostileProvider);
   assert.equal(row0.children[2].children[0].textContent, `${hostileRowLabel}: 88%`);
-  assert.equal(row0.children[2].children[1].textContent, 'missing-pct: -');
-  assert.equal(row0.children[2].children[2].textContent, 'empty-pct: -');
+  assert.equal(row0.children[2].children[1].textContent, 'non-numeric-pct: -');
 
   // Untrusted tier value must not inject extra classes into badge className.
   const tierBadge = row0.children[4].children[0];

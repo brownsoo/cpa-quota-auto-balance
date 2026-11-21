@@ -347,9 +347,9 @@
           const pill = document.createElement('span');
           pill.className = 'window-pill';
           pill.appendChild(document.createTextNode(String(r.label ?? '') + ': '));
-          // Avoid coercing missing/empty values (null, "") into 0%.
-          const hasPct = r.percent !== null && r.percent !== undefined && r.percent !== '' && Number.isFinite(Number(r.percent));
-          const pctText = hasPct ? (Math.round(Number(r.percent)) + '%') : '-';
+          const pctText = (typeof r.percent === 'number' && Number.isFinite(r.percent))
+            ? (Math.round(r.percent) + '%')
+            : '-';
           pill.appendChild(createTextEl('strong', pctText));
           windowsTd.appendChild(pill);
         }
